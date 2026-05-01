@@ -114,3 +114,122 @@ Pour la production :
 ## Licence
 
 MIT
+
+---
+
+# WhatsApp Sentiment Analysis Bot
+
+A Django bot to analyze sentiments of WhatsApp messages via Meta's Cloud API.
+
+## Features
+
+- Receive WhatsApp messages via webhook
+- Store messages in a database
+- Sentiment analysis (to be implemented)
+- Django admin interface to view messages
+
+## Installation
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/Deleya/whatsapp-sentiment.git
+   cd whatsapp-sentiment
+   ```
+
+2. **Create a virtual environment**:
+   ```bash
+   python -m venv venv
+   # On Windows:
+   venv\Scripts\activate
+   # On Linux/Mac:
+   source venv/bin/activate
+   ```
+
+3. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Configure environment variables**:
+   Create a `.env` file in the root:
+   ```env
+   DEBUG=True
+   SECRET_KEY=your_secret_key
+   WHATSAPP_VERIFY_TOKEN=your_verification_token
+   ALLOWED_HOSTS=localhost,127.0.0.1,.ngrok-free.app
+   ```
+
+5. **Apply migrations**:
+   ```bash
+   python manage.py migrate
+   ```
+
+6. **Create a superuser** (optional, for admin):
+   ```bash
+   python manage.py createsuperuser
+   ```
+
+## Usage
+
+### Run the development server
+```bash
+python manage.py runserver
+```
+
+The server will be accessible at `http://127.0.0.1:8000/`.
+
+### Configure WhatsApp webhook
+
+1. **Use ngrok** to expose the local server:
+   ```bash
+   ngrok http 8000
+   ```
+   This gives a URL like `https://abcd1234.ngrok-free.app`.
+
+2. **Configure in Meta for Developers**:
+   - Callback URL: `https://abcd1234.ngrok-free.app/webhook/`
+   - Verify Token: the one defined in `.env`
+
+3. **Test**:
+   - Send a message on connected WhatsApp.
+   - Check in Django admin: `http://127.0.0.1:8000/admin/`
+
+## Project Structure
+
+```
+whatsapp_sentiment/
+├── apps/
+│   ├── core/          # Main app
+│   └── whatsapp_bot/  # WhatsApp bot logic
+├── config/            # Django configuration
+├── db.sqlite3         # Database
+├── manage.py          # Django management script
+└── .env               # Environment variables
+```
+
+## Technologies Used
+
+- **Django**: Web framework
+- **WhatsApp Cloud API**: To receive messages
+- **SQLite**: Database (easily replaceable with PostgreSQL)
+- **python-decouple**: Environment variable management
+
+## Development
+
+### Add sentiment analysis
+
+In `apps/whatsapp_bot/models.py`, the `sentiment_score` and `sentiment_label` fields are ready.
+
+Implement the logic in `views.py` or create a Celery task to analyze received messages.
+
+### Deployment
+
+For production:
+- Use a WSGI server like Gunicorn
+- Configure a reverse proxy (Nginx)
+- Use a robust database (PostgreSQL)
+- Secure with HTTPS
+
+## License
+
+MIT
