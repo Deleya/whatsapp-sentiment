@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.utils.html import format_html, mark_safe
 import json
 
 from .models import Message
@@ -6,22 +7,145 @@ from .models import Message
 
 @admin.register(Message)
 class MessageAdmin(admin.ModelAdmin):
-    # On affiche les colonnes importantes et lisibles
-    list_display = ('phone_number', 'get_message_text', 'sentiment_label', 'sentiment_score', 'timestamp')
-    
-    # On permet de filtrer par sentiment ou par date
-    list_filter = ('sentiment_label', 'timestamp')
-    
-    # On rend le champ brut lisible seulement dans la vue détaillée (quand on clique sur le message)
+    list_display = ('phone_number', 'get_message_text', 'colored_sentiment', 'sentiment_bar', 'timestamp')
+    list_filter = ('sentiment_label', 'timestamp', 'processed')
     readonly_fields = ('raw_webhook_data',)
 
-    # Petite méthode magique pour extraire le texte du message du JSON pour le tableau
+    def get_fieldsets(self, request, obj=None):
+        if obj:
+            return (
+                ('Informations du message', {
+                    'fields': ('phone_number', 'message_text', 'timestamp')
+                }),
+                ('Analyse Sentiment', {
+                    'fields': ('colored_sentiment_detail', 'sentiment_bar_detail', 'processed'),
+                    'classes': ('wide',)
+                }),
+                ('Données brutes (Debug)', {
+                    'fields': ('raw_webhook_data',),
+                    'classes': ('collapse',)
+                }),
+            )
+        return super().get_fieldsets(request, obj)
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj:
+            return list(self.readonly_fields) + ['colored_sentiment_detail', 'sentiment_bar_detail']
+        return self.readonly_fields
+
     def get_message_text(self, obj):
-        try:
-            # raw_webhook_data est déjà un dict, pas besoin de json.loads
-            data = obj.raw_webhook_data
-            return data['entry'][0]['changes'][0]['value']['messages'][0]['text']['body'][:50] + "..."
-        except (KeyError, IndexError, TypeError):
-            return "Texte indisponible"
-    
-    get_message_text.short_description = "Message (extrait)" # Nom de la colonne
+        text = obj.message_text[:50] + "..." if len(obj.message_text) > 50 else obj.message_text
+        return text
+    get_message_text.short_description = "Message"
+
+    def colored_sentiment(self, obj):
+        """Affiche le sentiment avec couleur dans la liste"""
+        if not obj.sentiment_label:
+            return mark_safe('<span style="color: grey;">Non analysé</span>')
+
+        label_upper = obj.sentiment_label.upper() if obj.sentiment_label else ''
+        color = {
+            'POSITIF': '#28a745',   # Vert
+            'POSITIVE': '#28a745',
+            'NÉGATIF': '#dc3545',   # Rouge
+            'NEGATIF': '#dc3545',
+            'NEGATIVE': '#dc3545',
+            'NEUTRE': '#ffc107',     # Jaune
+            'NEUTRAL': '#ffc107'
+        }.get(label_upper, 'grey')
+
+        return format_html(
+            '<b style="color: {}; font-size: 13px;">{}</b>',
+            color,
+            obj.sentiment_label
+        )
+    colored_sentiment.short_description = 'Sentiment'
+
+    def colored_sentiment_detail(self, obj):
+        """Affiche le sentiment avec couleur en détail"""
+        if not obj.sentiment_label:
+            return mark_safe('<span style="color: grey; font-size: 16px;">Non analysé</span>')
+
+        label_upper = obj.sentiment_label.upper() if obj.sentiment_label else ''
+        color = {
+            'POSITIF': '#28a745',
+            'POSITIVE': '#28a745',
+            'NÉGATIF': '#dc3545',
+            'NEGATIF': '#dc3545',
+            'NEGATIVE': '#dc3545',
+            'NEUTRE': '#ffc107',
+            'NEUTRAL': '#ffc107'
+        }.get(label_upper, 'grey')
+
+        emoji = {
+            'POSITIF': '😊',
+            'POSITIVE': '😊',
+            'NÉGATIF': '😞',
+            'NEGATIF': '😞',
+            'NEGATIVE': '😞',
+            'NEUTRE': '😐',
+            'NEUTRAL': '😐'
+        }.get(label_upper, '')
+
+        return format_html(
+            '<h3 style="color: {};">{} {}</h3>',
+            color,
+            emoji,
+            obj.sentiment_label
+        )
+    colored_sentiment_detail.short_description = 'Sentiment Analysé'
+
+    def sentiment_bar(self, obj):
+        """Barre de confiance minimaliste pour la liste"""
+        if not obj.sentiment_score:
+            return "—"
+
+        percentage = int(obj.sentiment_score * 100)
+        label_upper = obj.sentiment_label.upper() if obj.sentiment_label else ''
+        bar_color = {
+            'POSITIF': '#28a745',
+            'POSITIVE': '#28a745',
+            'NÉGATIF': '#dc3545',
+            'NEGATIF': '#dc3545',
+            'NEGATIVE': '#dc3545',
+            'NEUTRE': '#ffc107',
+            'NEUTRAL': '#ffc107'
+        }.get(label_upper, '#999')
+
+        return format_html(
+            '<div style="width: 80px; height: 8px; background-color: #eee; border-radius: 4px; overflow: hidden;">'
+            '<div style="width: {}%; height: 100%; background-color: {}; transition: width 0.3s;"></div>'
+            '</div>',
+            percentage,
+            bar_color
+        )
+    sentiment_bar.short_description = 'Confiance'
+
+    def sentiment_bar_detail(self, obj):
+        """Barre de confiance détaillée pour la vue détail"""
+        if not obj.sentiment_score:
+            return mark_safe('<span style="color: grey;">Pas de score</span>')
+
+        percentage = int(obj.sentiment_score * 100)
+        label_upper = obj.sentiment_label.upper() if obj.sentiment_label else ''
+        bar_color = {
+            'POSITIF': '#28a745',
+            'POSITIVE': '#28a745',
+            'NÉGATIF': '#dc3545',
+            'NEGATIF': '#dc3545',
+            'NEGATIVE': '#dc3545',
+            'NEUTRE': '#ffc107',
+            'NEUTRAL': '#ffc107'
+        }.get(label_upper, '#999')
+
+        return format_html(
+            '<div style="margin: 20px 0;">'
+            '<div style="width: 100%; max-width: 400px; height: 30px; background-color: #f0f0f0; border-radius: 6px; overflow: hidden; border: 2px solid {color};">'
+            '<div style="width: {percentage}%; height: 100%; background-color: {color}; display: flex; align-items: center; justify-content: flex-end; padding-right: 10px; color: white; font-weight: bold;"></div>'
+            '</div>'
+            '<p style="margin-top: 10px; font-size: 16px;"><strong>Confiance: {percentage}%</strong></p>'
+            '</div>',
+            color=bar_color,
+            percentage=percentage
+        )
+    sentiment_bar_detail.short_description = 'Barre de Confiance'

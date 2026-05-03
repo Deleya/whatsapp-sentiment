@@ -5,10 +5,13 @@ __pycache__/
 
 # Virtual environments
 venv/
-.env
 .venv/
+.venv-1/
 env/
 ENV/
+
+# 🔐 Secrets — NE JAMAIS COMMITTER
+.env
 
 # Django
 *.log

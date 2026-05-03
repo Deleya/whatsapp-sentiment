@@ -17,7 +17,7 @@ Including another URLconf
 from django.http import HttpResponse
 from django.contrib import admin
 from django.urls import path
-from apps.whatsapp_bot.views import whatsapp_webhook
+from apps.whatsapp_bot.views import whatsapp_webhook, dashboard
 
 def home(request):
     return HttpResponse("Bonjour, Django tourne bien !")
@@ -25,6 +25,7 @@ def home(request):
 urlpatterns = [
     path('', home),
     path('admin/', admin.site.urls),
+    path('dashboard/', dashboard, name='dashboard'),
     path('webhook/', whatsapp_webhook, name='whatsapp_webhook'),
 ]
 
