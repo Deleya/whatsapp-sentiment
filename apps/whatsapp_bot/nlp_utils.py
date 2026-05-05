@@ -2,8 +2,9 @@ from transformers import pipeline
 
 # On charge le modèle une seule fois ici (au chargement du fichier)
 # pour éviter de le recharger à chaque message reçu.
-print("Chargement de l'IA...")
-analyseur = pipeline("sentiment-analysis", model="nlptown/bert-base-multilingual-uncased-sentiment")
+print("Chargement de l'IA de sentiment...")
+# On utilise DistilBERT multilingue, qui est conversationnel, très rapide et ne nécessite pas SentencePiece
+analyseur = pipeline("sentiment-analysis", model="lxyuan/distilbert-base-multilingual-cased-sentiments-student")
 
 def analyser_message_whatsapp(texte):
     """
@@ -13,24 +14,21 @@ def analyser_message_whatsapp(texte):
     # 1. On demande à l'IA d'analyser le texte
     resultat_brut = analyseur(texte)[0]
     
-    label_ia = resultat_brut['label']  # ex: '5 stars'
-    score_ia = resultat_brut['score']  # ex: 0.95
+    label_ia = resultat_brut['label'].lower()  # Le modèle renvoie souvent 'negative', 'neutral', 'positive'
+    score_ia = resultat_brut['score']
     
     # 2. On prépare notre variable de réponse
-    sentiment_final = "neutral" # Par défaut (correspond aux choices du modèle Django)
+    sentiment_final = "neutral"
     
-    # 3. La logique de traduction (Le coeur du code)
+    # 3. La logique de traduction
+    # Ce modèle est beaucoup plus précis pour les messages courts. 
+    # On lui fait confiance même si le score est moyen.
     
-    # Sécurité : si l'IA hésite trop, on reste sur Neutre
-    if score_ia < 0.4:
-        sentiment_final = "neutral"
-    
-    # Sinon, on traduit les étoiles
-    elif label_ia in ['4 stars', '5 stars']:
-        sentiment_final = "positive"
-        
-    elif label_ia in ['1 star', '2 stars']:
+    if label_ia in ['negative', 'label_0']:
         sentiment_final = "negative"
+        
+    elif label_ia in ['positive', 'label_2']:
+        sentiment_final = "positive"
         
     else:
         sentiment_final = "neutral"

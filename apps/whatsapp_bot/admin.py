@@ -2,7 +2,8 @@ from django.contrib import admin
 from django.utils.html import format_html, mark_safe
 import json
 
-from .models import Message
+from django.db.models import OuterRef, Subquery
+from .models import Message, ClientSatisfaction
 
 
 @admin.register(Message)
@@ -43,16 +44,11 @@ class MessageAdmin(admin.ModelAdmin):
         if not obj.sentiment_label:
             return mark_safe('<span style="color: grey;">Non analysé</span>')
 
-        label_upper = obj.sentiment_label.upper() if obj.sentiment_label else ''
         color = {
-            'POSITIF': '#28a745',   # Vert
-            'POSITIVE': '#28a745',
-            'NÉGATIF': '#dc3545',   # Rouge
-            'NEGATIF': '#dc3545',
-            'NEGATIVE': '#dc3545',
-            'NEUTRE': '#ffc107',     # Jaune
-            'NEUTRAL': '#ffc107'
-        }.get(label_upper, 'grey')
+            'positive': '#28a745',   # Vert
+            'negative': '#dc3545',   # Rouge
+            'neutral': '#ffc107'      # Jaune
+        }.get(obj.sentiment_label, 'grey')
 
         return format_html(
             '<b style="color: {}; font-size: 13px;">{}</b>',
@@ -66,26 +62,17 @@ class MessageAdmin(admin.ModelAdmin):
         if not obj.sentiment_label:
             return mark_safe('<span style="color: grey; font-size: 16px;">Non analysé</span>')
 
-        label_upper = obj.sentiment_label.upper() if obj.sentiment_label else ''
         color = {
-            'POSITIF': '#28a745',
-            'POSITIVE': '#28a745',
-            'NÉGATIF': '#dc3545',
-            'NEGATIF': '#dc3545',
-            'NEGATIVE': '#dc3545',
-            'NEUTRE': '#ffc107',
-            'NEUTRAL': '#ffc107'
-        }.get(label_upper, 'grey')
+            'positive': '#28a745',
+            'negative': '#dc3545',
+            'neutral': '#ffc107'
+        }.get(obj.sentiment_label, 'grey')
 
         emoji = {
-            'POSITIF': '😊',
-            'POSITIVE': '😊',
-            'NÉGATIF': '😞',
-            'NEGATIF': '😞',
-            'NEGATIVE': '😞',
-            'NEUTRE': '😐',
-            'NEUTRAL': '😐'
-        }.get(label_upper, '')
+            'positive': '😊',
+            'negative': '😞',
+            'neutral': '😐'
+        }.get(obj.sentiment_label, '')
 
         return format_html(
             '<h3 style="color: {};">{} {}</h3>',
@@ -101,16 +88,11 @@ class MessageAdmin(admin.ModelAdmin):
             return "—"
 
         percentage = int(obj.sentiment_score * 100)
-        label_upper = obj.sentiment_label.upper() if obj.sentiment_label else ''
         bar_color = {
-            'POSITIF': '#28a745',
-            'POSITIVE': '#28a745',
-            'NÉGATIF': '#dc3545',
-            'NEGATIF': '#dc3545',
-            'NEGATIVE': '#dc3545',
-            'NEUTRE': '#ffc107',
-            'NEUTRAL': '#ffc107'
-        }.get(label_upper, '#999')
+            'positive': '#28a745',
+            'negative': '#dc3545',
+            'neutral': '#ffc107'
+        }.get(obj.sentiment_label, '#999')
 
         return format_html(
             '<div style="width: 80px; height: 8px; background-color: #eee; border-radius: 4px; overflow: hidden;">'
@@ -127,16 +109,11 @@ class MessageAdmin(admin.ModelAdmin):
             return mark_safe('<span style="color: grey;">Pas de score</span>')
 
         percentage = int(obj.sentiment_score * 100)
-        label_upper = obj.sentiment_label.upper() if obj.sentiment_label else ''
         bar_color = {
-            'POSITIF': '#28a745',
-            'POSITIVE': '#28a745',
-            'NÉGATIF': '#dc3545',
-            'NEGATIF': '#dc3545',
-            'NEGATIVE': '#dc3545',
-            'NEUTRE': '#ffc107',
-            'NEUTRAL': '#ffc107'
-        }.get(label_upper, '#999')
+            'positive': '#28a745',
+            'negative': '#dc3545',
+            'neutral': '#ffc107'
+        }.get(obj.sentiment_label, '#999')
 
         return format_html(
             '<div style="margin: 20px 0;">'
@@ -149,3 +126,62 @@ class MessageAdmin(admin.ModelAdmin):
             percentage=percentage
         )
     sentiment_bar_detail.short_description = 'Barre de Confiance'
+
+@admin.register(ClientSatisfaction)
+class ClientSatisfactionAdmin(admin.ModelAdmin):
+    list_display = ('phone_number', 'colored_sentiment', 'sentiment_bar', 'timestamp')
+    list_filter = ('sentiment_label',)
+    search_fields = ('phone_number',)
+    
+    # Empêcher d'ajouter ou de supprimer manuellement depuis cette vue (c'est un tableau de bord)
+    def has_add_permission(self, request):
+        return False
+        
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        # SQLite compatible: On filtre pour n'obtenir que le message le plus récent par numéro
+        latest_messages = Message.objects.filter(
+            phone_number=OuterRef('phone_number')
+        ).order_by('-timestamp')
+        
+        return qs.filter(id=Subquery(latest_messages.values('id')[:1]))
+
+    def colored_sentiment(self, obj):
+        if not obj.sentiment_label:
+            return mark_safe('<span style="color: grey;">Non analysé</span>')
+
+        color = {
+            'positive': '#28a745',
+            'negative': '#dc3545',
+            'neutral': '#ffc107'
+        }.get(obj.sentiment_label, 'grey')
+
+        return format_html(
+            '<b style="color: {}; font-size: 14px;">{}</b>',
+            color,
+            obj.sentiment_label.upper()
+        )
+    colored_sentiment.short_description = 'État Final du Client'
+
+    def sentiment_bar(self, obj):
+        if not obj.sentiment_score:
+            return "—"
+
+        percentage = int(obj.sentiment_score * 100)
+        bar_color = {
+            'positive': '#28a745',
+            'negative': '#dc3545',
+            'neutral': '#ffc107'
+        }.get(obj.sentiment_label, '#999')
+
+        return format_html(
+            '<div style="width: 100px; height: 8px; background-color: #eee; border-radius: 4px; overflow: hidden;">'
+            '<div style="width: {}%; height: 100%; background-color: {}; transition: width 0.3s;"></div>'
+            '</div>',
+            percentage,
+            bar_color
+        )
+    sentiment_bar.short_description = 'Confiance IA'

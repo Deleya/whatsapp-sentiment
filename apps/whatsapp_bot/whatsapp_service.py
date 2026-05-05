@@ -34,6 +34,10 @@ def envoyer_alerte_whatsapp(message_alerte, numero_admin):
     print(f"Réponse Meta: {response.text}")
     print(f"-----------------------")
 
+    # LOGIQUE CRITIQUE: Si Meta refuse (ex: Numéro non autorisé dans la Sandbox), on LÈVE l'erreur !
+    if response.status_code not in [200, 201]:
+        raise Exception(f"Erreur Meta (Status {response.status_code}): {response.text}")
+
     return response.json()
 
 if __name__ == "__main__":

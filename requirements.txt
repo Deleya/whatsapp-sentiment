@@ -2,6 +2,8 @@ Django==6.0.4
 djangorestframework==3.15.2
 python-decouple==3.8
 requests==2.31.0
-transformers==4.42.0
-torch==2.11.0
+transformers
+torch
 groq>=0.4.0
+celery[redis]==5.6.3
+redis==6.4.0

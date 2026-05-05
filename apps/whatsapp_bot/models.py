@@ -25,6 +25,7 @@ class Message(models.Model):
     
     # Pour garder le payload complet du webhook (très utile pour debug)
     raw_webhook_data = models.JSONField(null=True, blank=True)
+    whatsapp_message_id = models.CharField(max_length=128, unique=True, null=True, blank=True, db_index=True)
     
     processed = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -40,3 +41,9 @@ class Message(models.Model):
 
     def __str__(self):
         return f"{self.phone_number} - {self.timestamp.strftime('%Y-%m-%d %H:%M')}"
+
+class ClientSatisfaction(Message):
+    class Meta:
+        proxy = True
+        verbose_name = "Satisfaction Client (Globale)"
+        verbose_name_plural = "Satisfaction Clients (Globale)"

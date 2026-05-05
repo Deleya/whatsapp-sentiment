@@ -4,10 +4,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 import json
 from django.conf import settings
-from .whatsapp_service import envoyer_alerte_whatsapp as envoyer_message_whatsapp
-from .nlp_utils import analyser_message_whatsapp
-from .agent_brain import generer_reponse
 from .models import Message
+from .celery_tasks import process_message_async
+from django.utils import timezone
 
 
 def extract_message_data(webhook_data):
@@ -22,20 +21,33 @@ def extract_message_data(webhook_data):
 
         # Vérifier si c'est un nouveau message
         if 'messages' not in value:
-            return None, None, None
+            return None, None, None, None
 
         message_obj = value['messages'][0]
         phone_number = message_obj.get('from')
         message_type = message_obj.get('type')
+        external_message_id = message_obj.get('id')
 
         if not phone_number:
-            return None, None, None
+            return None, None, None, None
 
         # Extraire le texte selon le type de message
         message_text = None
 
         if message_type == 'text':
             message_text = message_obj.get('text', {}).get('body', '')
+
+        elif message_type == 'interactive':
+            # Si l'utilisateur a cliqué sur un bouton
+            interactive_obj = message_obj.get('interactive', {})
+            interactive_type = interactive_obj.get('type')
+            if interactive_type == 'button_reply':
+                message_text = interactive_obj.get('button_reply', {}).get('title', '')
+                print(f"🔘 Bouton cliqué : {message_text}")
+            elif interactive_type == 'list_reply':
+                message_text = interactive_obj.get('list_reply', {}).get('title', '')
+            else:
+                message_text = "[Interaction reçue]"
 
         elif message_type == 'image':
             # Récupérer la légende si elle existe
@@ -62,11 +74,11 @@ def extract_message_data(webhook_data):
         else:
             message_text = f"[Type de message non géré: {message_type}]"
 
-        return phone_number, message_text if message_text else "", message_type
+        return phone_number, message_text if message_text else "", message_type, external_message_id
 
     except (KeyError, IndexError, TypeError) as e:
         print(f"❌ Erreur lors de l'extraction du message: {e}")
-        return None, None, None
+        return None, None, None, None
 
 
 @csrf_exempt
@@ -97,122 +109,106 @@ def whatsapp_webhook(request):
         print("Payload complet reçu :")
         print(json.dumps(data, indent=2))
 
-        # Extraire les données du message
-        phone_number, message_text, message_type = extract_message_data(data)
+        phone_number, message_text, message_type, external_message_id = extract_message_data(data)
 
         if phone_number and message_text:
-            sentiment_label = None
-            sentiment_score = None
+            if external_message_id:
+                existing_message = Message.objects.filter(whatsapp_message_id=external_message_id).first()
+                if existing_message:
+                    print(f"⚠️  Message déjà reçu : {external_message_id}. Aucune nouvelle tâche créée.")
+                else:
+                    message_obj = Message.objects.create(
+                        phone_number=phone_number,
+                        message_text=message_text,
+                        raw_webhook_data=data,
+                        whatsapp_message_id=external_message_id,
+                        processed=False
+                    )
+                    print(f"✅ Message créé en DB: {message_obj.id}")
 
-            # Analyse IA pour les messages texte
-            if message_type == 'text':
-                try:
-                    resultat_ia = analyser_message_whatsapp(message_text)
-                    sentiment_label = resultat_ia['label']  # positive, negative ou neutral
-                    sentiment_score = resultat_ia['score']
-
-                    print(f"--- ANALYSE IA RÉUSSIE ---")
-                    print(f"Message : {message_text}")
-                    print(f"Sentiment : {sentiment_label} ({sentiment_score})")
-                    print(f"------------------------")
-                except Exception as e:
-                    print(f"⚠️  Erreur lors de l'analyse IA : {e}")
-
-            # Sauvegarde dans la base
-            message_obj = Message.objects.create(
-                phone_number=phone_number,
-                message_text=message_text,
-                sentiment_label=sentiment_label,
-                sentiment_score=sentiment_score,
-                raw_webhook_data=data,
-                processed=True if sentiment_label else False
-            )
-            print(f"✅ Message sauvegardé !")
-            print(f"   Numéro: {phone_number}")
-            print(f"   Texte: {message_text[:100]}...")
-            if sentiment_label:
-                print(f"   Sentiment: {sentiment_label} ({sentiment_score})")
-            print(f"   ID: {message_obj.id}")
-
-            # ============================================================
-            # AUTOMATISATION : Réponse IA + alerte admin si négatif
-            # ============================================================
-
-            # Alerte admin si message négatif
-            if sentiment_label and sentiment_label.upper() in ('NEGATIVE', 'NÉGATIF', 'NEGATIF'):
-                alerte = (
-                    f"⚠️ MÉCONTENT : {phone_number} a dit :\n"
-                    f"'{message_text}'"
+                    # 2. Queue la tâche async (NE PAS ATTENDRE)
+                    try:
+                        process_message_async.delay(
+                            phone_number=phone_number,
+                            message_text=message_text,
+                            message_type=message_type,
+                            message_id=str(message_obj.id),
+                            raw_webhook_data=data
+                        )
+                        print(f"⏳ Tâche queued pour traitement async")
+                    except Exception as celery_err:
+                        print(f"❌ Erreur Redis/Celery (message non traité) : {celery_err}")
+            else:
+                message_obj = Message.objects.create(
+                    phone_number=phone_number,
+                    message_text=message_text,
+                    raw_webhook_data=data,
+                    processed=False
                 )
+                print(f"✅ Message créé en DB sans ID externe: {message_obj.id}")
+
                 try:
-                    envoyer_message_whatsapp(alerte, "221776746609")
-                    print(">>> ✅ Alerte admin envoyée !")
-                except Exception as e:
-                    print(f"❌ Erreur alerte admin : {e}")
-
-            # Générer la réponse IA via Groq/LLaMA 3
-            reponse = generer_reponse(
-                message_utilisateur=message_text,
-                numero_tel=phone_number,
-                sentiment=sentiment_label,
-                score=sentiment_score
-            )
-
-            # 3. Envoi de la réponse à l'utilisateur (AUTOMATIQUE)
-            try:
-                envoyer_message_whatsapp(reponse, phone_number)
-                print(f">>> ✅ Réponse auto envoyée à {phone_number} : {reponse}")
-            except Exception as e:
-                print(f"❌ Erreur envoi réponse user : {e}")
-
+                    process_message_async.delay(
+                        phone_number=phone_number,
+                        message_text=message_text,
+                        message_type=message_type,
+                        message_id=str(message_obj.id),
+                        raw_webhook_data=data
+                    )
+                    print(f"⏳ Tâche queued pour traitement async")
+                except Exception as celery_err:
+                    print(f"❌ Erreur Redis/Celery (message non traité) : {celery_err}")
         else:
-            print("⚠️  Aucun message à traiter (webhook reçu mais pas de données de message)")
+            print("⚠️  Aucun message à traiter")
 
         print(f"{'='*90}\n")
-        return JsonResponse({"status": "success"}, status=200)
+
+        # 3. Répondre IMMÉDIATEMENT (< 0.2s) sans attendre le traitement
+        return JsonResponse({"status": "received"}, status=200)
 
     except json.JSONDecodeError:
         print("❌ Erreur : Le body n'est pas du JSON valide")
         return JsonResponse({"error": "Invalid JSON"}, status=400)
     except Exception as e:
         print(f"❌ Erreur inattendue : {e}")
-        return JsonResponse({"error": "Server error"}, status=500)
+        # Toujours retourner 200 à WhatsApp pour éviter les retries en boucle
+        return JsonResponse({"status": "error_acknowledged"}, status=200)
 
 
 def dashboard(request):
     total = Message.objects.count()
-
-    # Nombre d'utilisateurs uniques (numéros de téléphone distincts)
-    nb_utilisateurs = Message.objects.values('phone_number').distinct().count()
-
-    nb_positifs = Message.objects.filter(sentiment_label='positive').count()
-    nb_negatifs = Message.objects.filter(sentiment_label='negative').count()
-    nb_neutres = Message.objects.filter(sentiment_label='neutral').count()
-
-    # Messages non encore analysés (sentiment_label est NULL)
-    nb_pending = Message.objects.filter(sentiment_label__isnull=True).count()
-
-    # Les pourcentages sont calculés sur les messages ANALYSÉS uniquement
-    nb_analyses = nb_positifs + nb_negatifs + nb_neutres
-
-    if nb_analyses > 0:
-        pourcent_positif = (nb_positifs / nb_analyses) * 100
-        pourcent_negatif = (nb_negatifs / nb_analyses) * 100
-        pourcent_neutre = (nb_neutres / nb_analyses) * 100
-    else:
-        pourcent_positif = pourcent_negatif = pourcent_neutre = 0
-
+    utilisateurs = Message.objects.values('phone_number').distinct().count()
+    pending = Message.objects.filter(processed=False).count()
+    
+    # NOUVELLE LOGIQUE : Satisfaction Globale par Utilisateur
+    # Au lieu d'analyser chaque message individuellement, on prend le dernier
+    # message de la conversation pour définir l'état final du client.
+    users_latest_sentiment = {}
+    for msg in Message.objects.order_by('timestamp'):
+        if msg.sentiment_label:
+            users_latest_sentiment[msg.phone_number] = msg.sentiment_label
+            
+    positifs = list(users_latest_sentiment.values()).count('positive')
+    negatifs = list(users_latest_sentiment.values()).count('negative')
+    neutres = list(users_latest_sentiment.values()).count('neutral')
+    
+    nb_analyses = positifs + negatifs + neutres
+    
+    p_positif = round((positifs / nb_analyses * 100), 1) if nb_analyses > 0 else 0
+    p_negatif = round((negatifs / nb_analyses * 100), 1) if nb_analyses > 0 else 0
+    p_neutre = round((neutres / nb_analyses * 100), 1) if nb_analyses > 0 else 0
+    
     context = {
         'total': total,
-        'positifs': nb_positifs,
-        'negatifs': nb_negatifs,
-        'neutres': nb_neutres,
-        'pending': nb_pending,
+        'utilisateurs': utilisateurs,
+        'positifs': positifs,
+        'negatifs': negatifs,
+        'neutres': neutres,
+        'pending': pending,
         'nb_analyses': nb_analyses,
-        'utilisateurs': nb_utilisateurs,
-        'p_positif': round(pourcent_positif, 1),
-        'p_negatif': round(pourcent_negatif, 1),
-        'p_neutre': round(pourcent_neutre, 1),
+        'p_positif': p_positif,
+        'p_negatif': p_negatif,
+        'p_neutre': p_neutre,
+        'now': timezone.now()
     }
-
     return render(request, 'whatsapp_bot/dashboard.html', context)

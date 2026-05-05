@@ -154,6 +154,7 @@ def generer_reponse(message_utilisateur, numero_tel, sentiment=None, score=None)
             temperature=0.7,       # Un peu de créativité mais pas trop
             max_tokens=300,        # Réponses courtes (WhatsApp)
             top_p=0.9,
+            timeout=10.0,          # Sécurité: on n'attend pas plus de 10s
         )
 
         reponse_ia = completion.choices[0].message.content.strip()
@@ -166,15 +167,16 @@ def generer_reponse(message_utilisateur, numero_tel, sentiment=None, score=None)
         return reponse_ia
 
     except Exception as e:
-        print(f"❌ Agent Brain — Erreur Groq : {e}")
+        # LOG de l'erreur pour l'admin (dans ton terminal Celery)
+        print(f"❌ ERREUR CRITIQUE GROQ : {e}")
 
-        # Réponses de secours en cas d'erreur de l'IA
-        reponses_fallback = {
-            "negative": "Nous sommes désolés pour votre expérience. 😔 Un conseiller va vous contacter très bientôt pour résoudre ce problème.",
-            "positive": "Merci beaucoup pour votre message ! 😊 Nous sommes ravis. N'hésitez pas si vous avez d'autres questions.",
-            "neutral": "Merci pour votre message ! 👍 Un conseiller est disponible pour vous aider. Souhaitez-vous être recontacté ?",
+        # RÉPONSE DE SECOURS (Le Fallback)
+        fallbacks = {
+            "negative": "Je suis sincèrement désolé, je rencontre une petite difficulté technique pour vous répondre précisément. Un conseiller de WORK.BAKETLI.TECH a été prévenu et reviendra vers vous très vite.",
+            "positive": "Merci pour votre enthousiasme ! Je rencontre un petit souci technique pour discuter davantage, mais sachez que nous apprécions beaucoup votre retour.",
+            "neutral": "Merci pour votre message. Je rencontre une maintenance temporaire. N'hésitez pas à nous recontacter dans quelques instants ou à consulter notre site WORK.BAKETLI.TECH."
         }
-        return reponses_fallback.get(sentiment, reponses_fallback["neutral"])
+        return fallbacks.get(sentiment, "Merci de votre patience, notre assistant IA est en maintenance. Un humain de WORK.BAKETLI.TECH prend le relais !")
 
 
 # ============================================================
