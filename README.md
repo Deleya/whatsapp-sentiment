@@ -29,8 +29,8 @@ WHATSAPP_ADMIN_NUMBER=221xxxxxxxxx
 
 **2. Lancement des services (Développement Local)**
 ```bash
-# 1. Démarrer Redis (via Docker sous Windows)
-docker start redis-server
+# 1. Vérifier que Redis tourne 
+# Note : Si vous utilisez Docker sous Windows, le moteur (WSL/com.docker.backend) tourne en tâche de fond et relance souvent Redis de manière invisible au démarrage du PC, même si l'interface graphique Docker est fermée !
 
 # 2. Lancer le serveur Django
 python manage.py runserver
