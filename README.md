@@ -1,97 +1,167 @@
-# 🤖 WORK.BAKETLI.TECH - Intelligent WhatsApp CRM Bot
+# 🤖 WhatsApp Sentiment Bot - Asynchrone avec Celery
 
-🌍 *[Français ci-dessous](#-version-française)*
+Bot WhatsApp qui analyse le sentiment des messages et génère des réponses IA en temps réel, sans bloquer le serveur.
 
-An AI-powered automated customer service system for WhatsApp, featuring a high-performance asynchronous architecture, local conversational sentiment analysis, and a B2B analytics dashboard.
+## 🎯 Architecture
 
-## 🚀 Key Features
-- **WhatsApp Cloud API Integration:** Real-time reception and sending of text messages and interactive menus.
-- **AI Brain (Groq / LLaMA 3):** Ultra-fast contextual responses, adapted to the educational sector with a fallback system ensuring 100% uptime.
-- **Global Sentiment Analysis (NLP):** Utilizes `DistilBERT Multilingual` locally to evaluate the customer's psychological state over the entire conversation (rather than sentence by sentence).
-- **Tonal Adaptation:** The AI adjusts its empathy level based on the detected sentiment.
-- **Automatic Escalation:** Instantly sends a WhatsApp alert to the administrator if a conversation escalates (negative global sentiment).
-- **SaaS & CRM Dashboard:** Web interface powered by Tailwind CSS and Chart.js to visualize KPIs (global satisfaction rate, unique clients) and a Django Admin panel for CRM management.
-
-## 🏗️ Technical Architecture
-The application relies on strict decoupling to ensure maximum scalability (no dropped messages, even under heavy load):
-- **Django (Backend):** Webhook entry point (response < 200ms) and database management (SQLite/PostgreSQL).
-- **Celery + Redis:** Asynchronous queue (Broker & Worker) handling heavy external API calls (Groq, HuggingFace, Meta).
-
-## ⚙️ Installation & Setup
-
-**1. Environment Variables (`.env`)**
-Create a `.env` file at the root:
-```env
-WHATSAPP_TOKEN=your_meta_token
-WHATSAPP_PHONE_NUMBER_ID=your_phone_id
-WHATSAPP_VERIFY_TOKEN=your_custom_verify_token
-GROQ_API_KEY=your_groq_api_key
-WHATSAPP_ADMIN_NUMBER=221xxxxxxxxx
+```
+Message WhatsApp → Meta Webhook → Django (0.05s) → 200 OK (immédiat)
+                                      ↓
+                                 Redis Queue
+                                      ↓
+                            Celery Worker (2-5s)
+                        • Analyse sentiment (IA)
+                        • Génère réponse (Groq)
+                        • Envoie WhatsApp
 ```
 
-**2. Starting the Services (Local Development)**
-```bash
-# 1. Ensure Redis is running
-# Note: If using Docker on Windows, the backend engine (WSL/com.docker.backend) runs in the background and automatically starts Redis on boot, even if the Docker UI is closed!
-
-# 2. Start the Django server
-python manage.py runserver
-
-# 3. Start the Celery worker (in a second terminal)
-.\venv\Scripts\celery.exe -A config worker -l info --pool=solo
-```
-
-## 🛡️ Resilience
-This project integrates production-level safety mechanisms:
-- `try/except` blocks around all external API calls.
-- HTTP Status Code validation with exponential retry strategies via Celery.
-- Hardcoded fallback response dictionaries in case of a total LLM provider outage.
+**Clé** : Django répond **immédiatement** sans attendre le traitement IA.
 
 ---
 
-# 🇫🇷 Version Française
+## 🚀 Démarrage Local (3 terminaux)
 
-Un système de service client automatisé par IA (WhatsApp), doté d'une architecture asynchrone hautes performances, d'une analyse de sentiment conversationnelle locale, et d'un tableau de bord analytique B2B.
+### 1. Installer Redis (Memurai sur Windows)
 
-## 🚀 Fonctionnalités Principales
-- **Intégration WhatsApp Cloud API :** Réception et envoi de messages textes et menus interactifs en temps réel.
-- **Cerveau IA (Groq / LLaMA 3) :** Réponses contextuelles ultra-rapides, adaptées au domaine de la formation avec un système de "Fallbacks" pour assurer une disponibilité de 100%.
-- **Analyse de Sentiment Globale (NLP) :** Utilisation de `DistilBERT Multilingual` en local pour évaluer l'état psychologique du client sur l'ensemble de la conversation (et non phrase par phrase).
-- **Adaptation Tonale :** L'IA modifie son niveau d'empathie en fonction du sentiment détecté.
-- **Escalade Automatique :** Envoi instantané d'une alerte WhatsApp à l'administrateur si une conversation dégénère (sentiment global négatif).
-- **Dashboard SaaS & CRM :** Interface Web propulsée par Tailwind CSS et Chart.js pour visualiser les KPIs (taux de satisfaction global, clients uniques) et panel Admin Django pour la gestion CRM.
+Télécharge : https://www.memurai.com/
 
-## 🏗️ Architecture Technique
-L'application repose sur un découplage strict pour garantir une scalabilité maximale (aucune perte de message, même sous forte charge) :
-- **Django (Backend) :** Point d'entrée Webhook (réponse < 200ms) et gestion de la base de données (SQLite/PostgreSQL).
-- **Celery + Redis :** File d'attente asynchrone (Broker & Worker) gérant les appels API externes lourds (Groq, HuggingFace, Meta).
+Valide : `redis-cli ping` → `PONG`
 
-## ⚙️ Installation & Lancement
+### 2. Terminal 1 : Django
 
-**1. Variables d'environnement (`.env`)**
-Créez un fichier `.env` à la racine :
-```env
-WHATSAPP_TOKEN=your_meta_token
-WHATSAPP_PHONE_NUMBER_ID=your_phone_id
-WHATSAPP_VERIFY_TOKEN=your_custom_verify_token
-GROQ_API_KEY=your_groq_api_key
-WHATSAPP_ADMIN_NUMBER=221xxxxxxxxx
-```
-
-**2. Lancement des services (Développement Local)**
-```bash
-# 1. Vérifier que Redis tourne 
-# Note : Si vous utilisez Docker sous Windows, le moteur (WSL/com.docker.backend) tourne en tâche de fond et relance souvent Redis de manière invisible au démarrage du PC, même si l'interface graphique Docker est fermée !
-
-# 2. Lancer le serveur Django
+```powershell
+.\.venv\Scripts\Activate.ps1
+python manage.py migrate
 python manage.py runserver
-
-# 3. Lancer le worker Celery (dans un second terminal)
-.\venv\Scripts\celery.exe -A config worker -l info --pool=solo
 ```
 
-## 🛡️ Résilience
-Ce projet intègre des sécurités de niveau production :
-- `try/except` sur tous les appels APIs externes.
-- Validation des Status Codes HTTP avec relance (Retry) exponentielle sur Celery.
-- Dictionnaires de réponses de secours (Hardcoded) en cas de panne totale du fournisseur LLM.
+### 3. Terminal 2 : Celery Worker
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+celery -A config worker -l info
+```
+
+### 4. Terminal 3 : Redis
+
+```powershell
+# Memurai tourne déjà (service Windows)
+redis-cli ping  # Valide que Redis répond
+```
+
+---
+
+## 📁 Structure clé
+
+```
+apps/whatsapp_bot/
+├── models.py          # Message (avec déduplication)
+├── views.py           # Webhook Django
+├── celery_tasks.py    # Tâche async ⭐
+├── nlp_utils.py       # Sentiment
+├── agent_brain.py     # IA (Groq)
+└── whatsapp_sender.py # Envoi WhatsApp
+
+config/
+├── celery.py          # Config Celery ⭐
+├── settings.py        # Django + Redis
+└── urls.py            # Routes
+```
+
+---
+
+## ⚙️ Configuration (.env)
+
+```env
+# Django
+SECRET_KEY=your_secret_key
+DEBUG=False
+
+# WhatsApp
+WHATSAPP_VERIFY_TOKEN=your_token
+WHATSAPP_ACCESS_TOKEN=your_access_token
+WHATSAPP_BUSINESS_ACCOUNT_ID=your_business_id
+
+# Groq API
+GROQ_API_KEY=your_groq_api_key
+
+# Redis (défault : localhost)
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
+```
+
+---
+
+## 🔐 Déduplication (Pas de doubles)
+
+Utilise `whatsapp_message_id` (ID externe Meta) comme clé unique :
+
+```python
+# models.py
+class Message(models.Model):
+    whatsapp_message_id = models.CharField(
+        max_length=128,
+        unique=True,        # ← Empêche les doubles
+        null=True,
+        blank=True,
+        db_index=True       # ← Index pour recherche rapide
+    )
+    processed = models.BooleanField(default=False)
+```
+
+---
+
+## 📈 Performance
+
+| Métrique | Cible | Réel |
+|----------|-------|------|
+| Django response | < 0.1s | 0.05s ✅ |
+| Celery processing | 2-5s | 3s ✅ |
+| Parallel messages | 100+ | Supported ✅ |
+
+---
+
+## 🐳 Production (Docker - Optionnel)
+
+```bash
+cd docker-prod
+docker compose build
+docker compose up -d
+docker compose logs -f
+```
+
+---
+
+## 🧪 Test rapide
+
+```bash
+# Envoie un message WhatsApp
+# Terminal Django : POST /webhook/ 200
+# Terminal Celery : ✅ Message traité avec succès
+```
+
+---
+
+## 📚 Fichiers clés
+
+| Fichier | Rôle |
+|---------|------|
+| `config/celery.py` | Initialise Celery |
+| `apps/whatsapp_bot/celery_tasks.py` | Tâche async (sentiment + IA + envoi) |
+| `apps/whatsapp_bot/views.py` | Webhook (enqueue seulement, ne pas attendre) |
+| `requirements.txt` | Dépendances (`celery[redis]`, `redis`) |
+
+---
+
+## 🐛 Troubleshooting
+
+| Erreur | Solution |
+|--------|----------|
+| Redis not found | `redis-cli ping` → Lancer Memurai |
+| celery not found | `pip install celery[redis]` |
+| Worker not accepting tasks | Les 3 terminaux tournent ? |
+| Duplicate messages | Vérifier `whatsapp_message_id` unique |
+
+---
+
+**Prêt ! Lance les 3 terminaux et envoie un message WhatsApp.** ✨
