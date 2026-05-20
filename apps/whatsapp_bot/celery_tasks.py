@@ -1,9 +1,11 @@
 from celery import shared_task
-from .nlp_utils import analyser_message_whatsapp
+from django.conf import settings
+from .nlp_utils import analyser_message_whatsapp, analyser_sentiment_global
 from .agent_brain import generer_reponse
 from .whatsapp_sender import send_whatsapp_message, envoyer_boutons_amorce
 from .whatsapp_service import envoyer_alerte_whatsapp
 from .models import Message
+
 
 
 @shared_task(bind=True, max_retries=3, acks_late=True)
@@ -51,27 +53,30 @@ def process_message_async(self, phone_number, message_text, message_type, messag
                 pass
             return # On s'arrête là, pas besoin de Groq pour un simple "bonjour"
 
-        # 1. Analyser sentiment (seulement pour les textes ou clics de boutons)
+        # 1. Analyser sentiment GLOBAL (basé sur les 4 derniers messages de la conversation)
         if message_type in ['text', 'interactive']:
             try:
-                # LOGIQUE METIER : Analyse globale de la conversation
-                # On récupère les 4 derniers messages du client pour comprendre son évolution
-                derniers_msgs = Message.objects.filter(
-                    phone_number=phone_number
-                ).exclude(message_text="").order_by('-timestamp')[:4]
+                # Récupérer les 4 derniers messages texte du client (incluant le message actuel)
+                derniers_messages = list(
+                    Message.objects.filter(
+                        phone_number=phone_number,
+                        message_text__isnull=False
+                    ).exclude(
+                        message_text=''
+                    ).order_by('-timestamp')[:4].values_list('message_text', flat=True)
+                )
+                # Ajouter le message actuel s'il n'est pas encore en DB avec le bon texte
+                if message_text not in derniers_messages:
+                    derniers_messages.insert(0, message_text)
+                # Inverser pour avoir l'ordre chronologique (du plus ancien au plus récent)
+                derniers_messages = derniers_messages[::-1]
                 
-                # On remet les messages dans l'ordre chronologique (du plus ancien au plus récent)
-                textes = [msg.message_text for msg in derniers_msgs]
-                textes.reverse()
+                print(f"📊 Messages pour analyse globale ({len(derniers_messages)}): {[m[:30]+'...' if len(m)>30 else m for m in derniers_messages]}")
                 
-                # On assemble le tout pour nourrir l'IA de Sentiment
-                contexte_global = " | ".join(textes)
-                print(f"🔍 Contexte global envoyé à l'IA : {contexte_global}")
-                
-                resultat_ia = analyser_message_whatsapp(contexte_global)
+                resultat_ia = analyser_sentiment_global(derniers_messages)
                 sentiment_label = resultat_ia['label']
                 sentiment_score = resultat_ia['score']
-                print(f"📊 Sentiment global analysé: {sentiment_label} ({sentiment_score})")
+                print(f"📊 Sentiment GLOBAL: {sentiment_label} ({sentiment_score})")
             except Exception as e:
                 print(f"❌ Erreur Sentiment Analysis: {e}. Valeurs par défaut appliquées.")
                 sentiment_label = "neutral"
@@ -96,16 +101,23 @@ def process_message_async(self, phone_number, message_text, message_type, messag
 
         # 3.5. Alerte Admin si sentiment négatif
         if sentiment_label == 'negative':
+            message_alerte = f"⚠️ *ALERTE CLIENT MÉCONTENT*\nNuméro: {phone_number}\nMessage: {message_text}"
             try:
-                # Bonne pratique : On récupère le numéro depuis le fichier .env
-                from decouple import config
-                admin_number = config("WHATSAPP_ADMIN_NUMBER", default="221776746609")
-                
-                message_alerte = f"⚠️ *ALERTE CLIENT MÉCONTENT*\nNuméro: {phone_number}\nMessage: {message_text}"
-                envoyer_alerte_whatsapp(message_alerte, admin_number)
-                print(f"🚨 Alerte Admin envoyée pour le numéro {phone_number} à l'admin {admin_number}")
+                envoyer_alerte_whatsapp(message_alerte, settings.WHATSAPP_ADMIN_NUMBER)
+                print(f"🚨 Alerte Admin envoyée pour le numéro {phone_number} à l'admin {settings.WHATSAPP_ADMIN_NUMBER}")
             except Exception as e:
-                print(f"❌ Impossible d'envoyer l'alerte Admin: {e}")
+                print(f"❌ CRITIQUE - Impossible d'envoyer l'alerte Admin: {e}")
+                # Marquer le message comme traité mais avec erreur d'alerte
+                try:
+                    message_obj = Message.objects.get(id=message_id)
+                    message_obj.sentiment_label = sentiment_label
+                    message_obj.sentiment_score = sentiment_score
+                    message_obj.processed = True
+                    message_obj.save()
+                except:
+                    pass
+                # Lever l'exception pour signaler l'échec critique
+                raise Exception(f"Alerte admin non envoyée - processus interrompu: {e}")
 
         # 4. Mettre à jour le message en DB
         try:

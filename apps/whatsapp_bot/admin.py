@@ -3,7 +3,7 @@ from django.utils.html import format_html, mark_safe
 import json
 
 from django.db.models import OuterRef, Subquery
-from .models import Message, ClientSatisfaction
+from .models import Message
 
 
 @admin.register(Message)
@@ -127,61 +127,3 @@ class MessageAdmin(admin.ModelAdmin):
         )
     sentiment_bar_detail.short_description = 'Barre de Confiance'
 
-@admin.register(ClientSatisfaction)
-class ClientSatisfactionAdmin(admin.ModelAdmin):
-    list_display = ('phone_number', 'colored_sentiment', 'sentiment_bar', 'timestamp')
-    list_filter = ('sentiment_label',)
-    search_fields = ('phone_number',)
-    
-    # Empêcher d'ajouter ou de supprimer manuellement depuis cette vue (c'est un tableau de bord)
-    def has_add_permission(self, request):
-        return False
-        
-    def has_delete_permission(self, request, obj=None):
-        return False
-
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        # SQLite compatible: On filtre pour n'obtenir que le message le plus récent par numéro
-        latest_messages = Message.objects.filter(
-            phone_number=OuterRef('phone_number')
-        ).order_by('-timestamp')
-        
-        return qs.filter(id=Subquery(latest_messages.values('id')[:1]))
-
-    def colored_sentiment(self, obj):
-        if not obj.sentiment_label:
-            return mark_safe('<span style="color: grey;">Non analysé</span>')
-
-        color = {
-            'positive': '#28a745',
-            'negative': '#dc3545',
-            'neutral': '#ffc107'
-        }.get(obj.sentiment_label, 'grey')
-
-        return format_html(
-            '<b style="color: {}; font-size: 14px;">{}</b>',
-            color,
-            obj.sentiment_label.upper()
-        )
-    colored_sentiment.short_description = 'État Final du Client'
-
-    def sentiment_bar(self, obj):
-        if not obj.sentiment_score:
-            return "—"
-
-        percentage = int(obj.sentiment_score * 100)
-        bar_color = {
-            'positive': '#28a745',
-            'negative': '#dc3545',
-            'neutral': '#ffc107'
-        }.get(obj.sentiment_label, '#999')
-
-        return format_html(
-            '<div style="width: 100px; height: 8px; background-color: #eee; border-radius: 4px; overflow: hidden;">'
-            '<div style="width: {}%; height: 100%; background-color: {}; transition: width 0.3s;"></div>'
-            '</div>',
-            percentage,
-            bar_color
-        )
-    sentiment_bar.short_description = 'Confiance IA'

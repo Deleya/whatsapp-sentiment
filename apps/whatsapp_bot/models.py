@@ -41,9 +41,3 @@ class Message(models.Model):
 
     def __str__(self):
         return f"{self.phone_number} - {self.timestamp.strftime('%Y-%m-%d %H:%M')}"
-
-class ClientSatisfaction(Message):
-    class Meta:
-        proxy = True
-        verbose_name = "Satisfaction Client (Globale)"
-        verbose_name_plural = "Satisfaction Clients (Globale)"

@@ -6,7 +6,6 @@ import json
 from django.conf import settings
 from .models import Message
 from .celery_tasks import process_message_async
-from django.utils import timezone
 
 
 def extract_message_data(webhook_data):
@@ -176,39 +175,5 @@ def whatsapp_webhook(request):
 
 
 def dashboard(request):
-    total = Message.objects.count()
-    utilisateurs = Message.objects.values('phone_number').distinct().count()
-    pending = Message.objects.filter(processed=False).count()
-    
-    # NOUVELLE LOGIQUE : Satisfaction Globale par Utilisateur
-    # Au lieu d'analyser chaque message individuellement, on prend le dernier
-    # message de la conversation pour définir l'état final du client.
-    users_latest_sentiment = {}
-    for msg in Message.objects.order_by('timestamp'):
-        if msg.sentiment_label:
-            users_latest_sentiment[msg.phone_number] = msg.sentiment_label
-            
-    positifs = list(users_latest_sentiment.values()).count('positive')
-    negatifs = list(users_latest_sentiment.values()).count('negative')
-    neutres = list(users_latest_sentiment.values()).count('neutral')
-    
-    nb_analyses = positifs + negatifs + neutres
-    
-    p_positif = round((positifs / nb_analyses * 100), 1) if nb_analyses > 0 else 0
-    p_negatif = round((negatifs / nb_analyses * 100), 1) if nb_analyses > 0 else 0
-    p_neutre = round((neutres / nb_analyses * 100), 1) if nb_analyses > 0 else 0
-    
-    context = {
-        'total': total,
-        'utilisateurs': utilisateurs,
-        'positifs': positifs,
-        'negatifs': negatifs,
-        'neutres': neutres,
-        'pending': pending,
-        'nb_analyses': nb_analyses,
-        'p_positif': p_positif,
-        'p_negatif': p_negatif,
-        'p_neutre': p_neutre,
-        'now': timezone.now()
-    }
-    return render(request, 'whatsapp_bot/dashboard.html', context)
+    messages = Message.objects.order_by('-timestamp')[:50]
+    return render(request, 'whatsapp_bot/dashboard.html', {'messages': messages})

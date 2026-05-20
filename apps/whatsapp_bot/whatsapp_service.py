@@ -1,10 +1,10 @@
 import requests
-from decouple import config
+from django.conf import settings
 
-# Clés Meta API — lues depuis le fichier .env (JAMAIS en dur dans le code)
-TOKEN = config("WHATSAPP_TOKEN")
-PHONE_NUMBER_ID = config("WHATSAPP_PHONE_NUMBER_ID")
+# Clés Meta API — lues depuis Django settings
 VERSION = "v21.0"
+TOKEN = settings.WHATSAPP_TOKEN
+PHONE_NUMBER_ID = settings.WHATSAPP_PHONE_NUMBER_ID
 
 def envoyer_alerte_whatsapp(message_alerte, numero_admin):
     """Envoie une alerte par WhatsApp à l'admin."""
@@ -24,7 +24,7 @@ def envoyer_alerte_whatsapp(message_alerte, numero_admin):
         }
     }
 
-    response = requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=headers, json=payload, timeout=10)
 
     # === DEBUG META API ===
     print(f"--- DEBUG META API ---")
@@ -34,7 +34,6 @@ def envoyer_alerte_whatsapp(message_alerte, numero_admin):
     print(f"Réponse Meta: {response.text}")
     print(f"-----------------------")
 
-    # LOGIQUE CRITIQUE: Si Meta refuse (ex: Numéro non autorisé dans la Sandbox), on LÈVE l'erreur !
     if response.status_code not in [200, 201]:
         raise Exception(f"Erreur Meta (Status {response.status_code}): {response.text}")
 

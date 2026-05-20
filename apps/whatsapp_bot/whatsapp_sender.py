@@ -1,12 +1,15 @@
+import json
 import requests
 from django.conf import settings
+
+VERSION = "v21.0"
 
 
 def send_whatsapp_message(phone_number, message_text):
     """
     Envoie un message WhatsApp via l'API Meta.
     """
-    url = f"https://graph.facebook.com/v18.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
+    url = f"https://graph.facebook.com/{VERSION}/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
 
     headers = {
         "Authorization": f"Bearer {settings.WHATSAPP_TOKEN}",
@@ -23,7 +26,14 @@ def send_whatsapp_message(phone_number, message_text):
     }
 
     try:
+        print(f"📤 Envoi WhatsApp vers {phone_number} (v{VERSION})")
         response = requests.post(url, json=payload, headers=headers, timeout=10)
+        print(f"📥 Réponse Meta status={response.status_code}: {response.text}")
+
+        if response.status_code not in [200, 201]:
+            print("❌ Envoi WhatsApp échoué: statut non 2xx")
+            return {"error": response.text, "status_code": response.status_code}
+
         return response.json()
     except Exception as e:
         print(f"❌ Erreur envoi WhatsApp: {e}")
