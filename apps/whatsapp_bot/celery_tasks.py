@@ -3,7 +3,6 @@ from django.conf import settings
 from .nlp_utils import analyser_message_whatsapp, analyser_sentiment_global
 from .agent_brain import generer_reponse
 from .whatsapp_sender import send_whatsapp_message, envoyer_boutons_amorce
-from .whatsapp_service import envoyer_alerte_whatsapp
 from .models import Message
 
 
@@ -23,6 +22,7 @@ def process_message_async(self, phone_number, message_text, message_type, messag
     try:
         sentiment_label = None
         sentiment_score = None
+        derniers_messages = None
 
         print(f"🔄 Traitement async commencé: {phone_number}")
 
@@ -99,25 +99,18 @@ def process_message_async(self, phone_number, message_text, message_type, messag
             except Exception as e:
                 print(f"❌ Impossible d'envoyer le WhatsApp final: {e}")
 
-        # 3.5. Alerte Admin si sentiment négatif
+        # 3.5. Déclenchement de la tâche d'alerte asynchrone découplée
         if sentiment_label == 'negative':
-            message_alerte = f"⚠️ *ALERTE CLIENT MÉCONTENT*\nNuméro: {phone_number}\nMessage: {message_text}"
             try:
-                envoyer_alerte_whatsapp(message_alerte, settings.WHATSAPP_ADMIN_NUMBER)
-                print(f"🚨 Alerte Admin envoyée pour le numéro {phone_number} à l'admin {settings.WHATSAPP_ADMIN_NUMBER}")
+                send_admin_alerts_async.delay(
+                    phone_number=phone_number,
+                    message_text=message_text,
+                    sentiment_score=float(sentiment_score) if sentiment_score is not None else 0.5,
+                    derniers_messages=derniers_messages
+                )
+                print(f"🚨 Tâche d'alerte asynchrone planifiée pour le client mécontent {phone_number}")
             except Exception as e:
-                print(f"❌ CRITIQUE - Impossible d'envoyer l'alerte Admin: {e}")
-                # Marquer le message comme traité mais avec erreur d'alerte
-                try:
-                    message_obj = Message.objects.get(id=message_id)
-                    message_obj.sentiment_label = sentiment_label
-                    message_obj.sentiment_score = sentiment_score
-                    message_obj.processed = True
-                    message_obj.save()
-                except:
-                    pass
-                # Lever l'exception pour signaler l'échec critique
-                raise Exception(f"Alerte admin non envoyée - processus interrompu: {e}")
+                print(f"❌ Impossible de planifier la tâche d'alerte: {e}")
 
         # 4. Mettre à jour le message en DB
         try:
@@ -147,3 +140,50 @@ def process_message_async(self, phone_number, message_text, message_type, messag
                 message_obj.save()
             except:
                 pass
+
+
+@shared_task(bind=True, max_retries=3, acks_late=True)
+def send_admin_alerts_async(self, phone_number, message_text, sentiment_score, derniers_messages=None):
+    """
+    Tâche Celery pour envoyer les alertes sur WhatsApp et Discord de manière isolée et résiliente.
+    """
+    print(f"🚨 Début d'envoi des alertes pour {phone_number}...")
+    whatsapp_error = None
+    discord_error = None
+
+    # 1. Envoi Alerte WhatsApp
+    try:
+        from .whatsapp_service import envoyer_alerte_whatsapp
+        message_alerte = f"⚠️ *ALERTE CLIENT MÉCONTENT*\nNuméro: {phone_number}\nMessage: {message_text}"
+        envoyer_alerte_whatsapp(message_alerte, settings.WHATSAPP_ADMIN_NUMBER)
+        print(f"✅ Alerte WhatsApp envoyée avec succès à {settings.WHATSAPP_ADMIN_NUMBER}")
+    except Exception as e:
+        print(f"❌ Échec de l'alerte WhatsApp: {e}")
+        whatsapp_error = e
+
+    # 2. Envoi Alerte Discord
+    try:
+        from .alerts import envoyer_alerte_discord
+        envoyer_alerte_discord(
+            phone_number=phone_number,
+            message_text=message_text,
+            sentiment_score=sentiment_score,
+            derniers_messages=derniers_messages
+        )
+    except Exception as e:
+        print(f"❌ Échec de l'alerte Discord: {e}")
+        discord_error = e
+
+    # Relancer si au moins une erreur s'est produite
+    if whatsapp_error or discord_error:
+        erreurs = []
+        if whatsapp_error:
+            erreurs.append(f"WhatsApp: {whatsapp_error}")
+        if discord_error:
+            erreurs.append(f"Discord: {discord_error}")
+        erreur_msg = " & ".join(erreurs)
+        print(f"⚠️ Relance de la tâche d'alerte en raison des erreurs: {erreur_msg}")
+        try:
+            self.retry(exc=Exception(erreur_msg), countdown=5 ** self.request.retries)
+        except Exception as retry_e:
+            print(f"❌ Impossible de planifier le retry de l'alerte: {retry_e}")
